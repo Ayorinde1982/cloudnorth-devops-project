@@ -108,7 +108,7 @@ resource "aws_s3_bucket" "static_content" {
 }
 
 resource "aws_db_subnet_group" "cloudnorth_db_subnet_group" {
-  name       = "cloudnorth-db-subnet-group"
+  name = "cloudnorth-db-subnet-group"
   subnet_ids = [
     aws_subnet.cloudnorth_subnet_1.id,
     aws_subnet.cloudnorth_subnet_2.id
