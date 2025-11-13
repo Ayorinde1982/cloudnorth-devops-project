@@ -1,137 +1,159 @@
+# main.tf - Defines the core network infrastructure for the CloudNorth EKS Cluster
+
+# ==============================================================================
+# 1. PROVIDER & VARIABLES
+# ==============================================================================
 provider "aws" {
-  region = "us-east-1"
+  region = var.aws_region
 }
 
-resource "aws_vpc" "cloudnorth_vpc" {
+variable "aws_region" {
+  description = "The AWS region where resources will be created."
+  type        = string
+  default     = "us-east-1"
+}
+
+# ==============================================================================
+# 2. VPC (VIRTUAL PRIVATE CLOUD)
+# This is the main network container for all our resources.
+# ==============================================================================
+resource "aws_vpc" "main" {
   cidr_block           = "10.0.0.0/16"
   enable_dns_support   = true
   enable_dns_hostnames = true
+
   tags = {
     Name = "cloudnorth-vpc"
   }
 }
 
-resource "aws_internet_gateway" "cloudnorth_igw" {
-  vpc_id = aws_vpc.cloudnorth_vpc.id
+# ==============================================================================
+# 3. INTERNET GATEWAY & PUBLIC ROUTING
+# To provide internet access to the public subnets.
+# ==============================================================================
+resource "aws_internet_gateway" "main" {
+  vpc_id = aws_vpc.main.id
+
   tags = {
     Name = "cloudnorth-igw"
   }
 }
 
-resource "aws_subnet" "cloudnorth_subnet_1" {
-  vpc_id            = aws_vpc.cloudnorth_vpc.id
-  cidr_block        = "10.0.10.0/24"
-  availability_zone = "us-east-1a"
-  tags = {
-    Name = "cloudnorth-subnet-1"
-  }
-}
+resource "aws_route_table" "public" {
+  vpc_id = aws_vpc.main.id
 
-resource "aws_subnet" "cloudnorth_subnet_2" {
-  vpc_id            = aws_vpc.cloudnorth_vpc.id
-  cidr_block        = "10.0.20.0/24"
-  availability_zone = "us-east-1b"
-  tags = {
-    Name = "cloudnorth-subnet-2"
-  }
-}
-
-resource "aws_security_group" "cloudnorth_sg" {
-  name        = "cloudnorth-sg"
-  description = "Allow SSH, HTTP, and HTTPS"
-  vpc_id      = aws_vpc.cloudnorth_vpc.id
-
-  ingress {
-    from_port   = 22
-    to_port     = 22
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  ingress {
-    from_port   = 80
-    to_port     = 80
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  ingress {
-    from_port   = 443
-    to_port     = 443
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  egress {
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
+  route {
+    cidr_block = "0.0.0.0/0"
+    gateway_id = aws_internet_gateway.main.id
   }
 
   tags = {
-    Name = "cloudnorth-sg"
+    Name = "cloudnorth-public-rt"
   }
 }
 
-resource "aws_instance" "frontend" {
-  ami                         = "ami-0c02fb55956c7d316" # Amazon Linux 2 AMI (us-east-1)
-  instance_type               = "t2.micro"
-  subnet_id                   = aws_subnet.cloudnorth_subnet_1.id
-  vpc_security_group_ids      = [aws_security_group.cloudnorth_sg.id]
-  associate_public_ip_address = true
+# ==============================================================================
+# 4. PUBLIC SUBNETS
+# For resources that need direct internet access (e.g., Load Balancers).
+# ==============================================================================
+resource "aws_subnet" "public_a" {
+  vpc_id                  = aws_vpc.main.id
+  cidr_block              = "10.0.1.0/24"
+  availability_zone       = "${var.aws_region}a"
+  map_public_ip_on_launch = true # Instances here get a public IP
+
   tags = {
-    Name = "cloudnorth-frontend"
+    Name = "cloudnorth-public-subnet-a"
   }
 }
 
-resource "aws_instance" "backend" {
-  ami                         = "ami-0c02fb55956c7d316"
-  instance_type               = "t2.micro"
-  subnet_id                   = aws_subnet.cloudnorth_subnet_1.id
-  vpc_security_group_ids      = [aws_security_group.cloudnorth_sg.id]
-  associate_public_ip_address = true
+resource "aws_subnet" "public_b" {
+  vpc_id                  = aws_vpc.main.id
+  cidr_block              = "10.0.2.0/24"
+  availability_zone       = "${var.aws_region}b"
+  map_public_ip_on_launch = true
+
   tags = {
-    Name = "cloudnorth-backend"
+    Name = "cloudnorth-public-subnet-b"
   }
 }
 
-resource "random_id" "bucket_id" {
-  byte_length = 4
+# Associate the public route table with our public subnets
+resource "aws_route_table_association" "public_a" {
+  subnet_id      = aws_subnet.public_a.id
+  route_table_id = aws_route_table.public.id
 }
 
-resource "aws_s3_bucket" "static_content" {
-  bucket = "cloudnorth-static-content-${random_id.bucket_id.hex}"
+resource "aws_route_table_association" "public_b" {
+  subnet_id      = aws_subnet.public_b.id
+  route_table_id = aws_route_table.public.id
+}
+
+# ==============================================================================
+# 5. NAT GATEWAY & PRIVATE ROUTING
+# To allow resources in private subnets to access the internet outbound.
+# ==============================================================================
+resource "aws_eip" "nat" {
+  depends_on = [aws_internet_gateway.main] # Ensures IGW is created first
+
   tags = {
-    Name = "cloudnorth-static-content"
+    Name = "cloudnorth-nat-eip"
   }
 }
 
-resource "aws_db_subnet_group" "cloudnorth_db_subnet_group" {
-  name = "cloudnorth-db-subnet-group"
-  subnet_ids = [
-    aws_subnet.cloudnorth_subnet_1.id,
-    aws_subnet.cloudnorth_subnet_2.id
-  ]
+resource "aws_nat_gateway" "main" {
+  allocation_id = aws_eip.nat.id
+  subnet_id     = aws_subnet.public_a.id # Place the NAT gateway in a public subnet
+
   tags = {
-    Name = "cloudnorth-db-subnet-group"
+    Name = "cloudnorth-nat-gw"
   }
 }
 
-resource "aws_db_instance" "cloudnorth_db" {
-  allocated_storage      = 20
-  engine                 = "mysql"
-  engine_version         = "8.0"
-  instance_class         = "db.t3.micro"
-  db_name                = "cloudnorthdb"
-  username               = "admin"
-  password               = "CloudNorth123!"
-  parameter_group_name   = "default.mysql8.0"
-  skip_final_snapshot    = true
-  publicly_accessible    = true
-  vpc_security_group_ids = [aws_security_group.cloudnorth_sg.id]
-  db_subnet_group_name   = aws_db_subnet_group.cloudnorth_db_subnet_group.name
-  tags = {
-    Name = "cloudnorth-db"
+resource "aws_route_table" "private" {
+  vpc_id = aws_vpc.main.id
+
+  route {
+    cidr_block     = "0.0.0.0/0"
+    nat_gateway_id = aws_nat_gateway.main.id
   }
+
+  tags = {
+    Name = "cloudnorth-private-rt"
+  }
+}
+
+# ==============================================================================
+# 6. PRIVATE SUBNETS
+# For our secure backend resources (EKS worker nodes).
+# ==============================================================================
+resource "aws_subnet" "private_a" {
+  vpc_id            = aws_vpc.main.id
+  cidr_block        = "10.0.101.0/24"
+  availability_zone = "${var.aws_region}a"
+
+  tags = {
+    Name = "cloudnorth-private-subnet-a"
+  }
+}
+
+resource "aws_subnet" "private_b" {
+  vpc_id            = aws_vpc.main.id
+  cidr_block        = "10.0.102.0/24"
+  availability_zone = "${var.aws_region}b"
+
+  tags = {
+    Name = "cloudnorth-private-subnet-b"
+  }
+}
+
+# Associate the private route table with our private subnets
+resource "aws_route_table_association" "private_a" {
+  subnet_id      = aws_subnet.private_a.id
+  route_table_id = aws_route_table.private.id
+}
+
+resource "aws_route_table_association" "private_b" {
+  subnet_id      = aws_subnet.private_b.id
+  route_table_id = aws_route_table.private.id
 }

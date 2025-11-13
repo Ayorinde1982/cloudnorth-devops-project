@@ -1,3 +1,8 @@
+# Triggering a new build for ECR push
+from flask import Flask, jsonify
+
+app = Flask(__name__)
+# ... (rest of the file is unchanged) ...
 from flask import Flask, jsonify
 
 app = Flask(__name__)
