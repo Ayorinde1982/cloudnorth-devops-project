@@ -1,0 +1,22 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend-deployment
+  labels:
+    app: backend
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: backend
+  template:
+    metadata:
+      labels:
+        app: backend
+    spec:
+      containers:
+      - name: backend-container
+        # !!! IMPORTANT: Use your actual ECR image URI here !!!
+        image: 305767681186.dkr.ecr.us-east-1.amazonaws.com/cloudnorth-backend:latest
+        ports:
+        - containerPort: 5000
