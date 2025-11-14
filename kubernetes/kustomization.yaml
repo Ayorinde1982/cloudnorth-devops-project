@@ -4,5 +4,4 @@ resources:
 - base
 images:
 - name: 305767681186.dkr.ecr.us-east-1.amazonaws.com/cloudnorth-backend
-  newName: 305767681186.dkr.ecr.us-east-1.amazonaws.com/cloudnorth-backend
-  newTag: test-tag
+  newName: 8028ad8fdee3a2776bdf79bf068252c0f664fafe
