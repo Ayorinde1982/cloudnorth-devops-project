@@ -17,6 +17,6 @@ spec:
       containers:
       - name: backend-container
         # !!! IMPORTANT: Use your actual ECR image URI here !!!
-        image: 305767681186.dkr.ecr.us-east-1.amazonaws.com/cloudnorth-backend:latest
+        image: 305767681186.dkr.ecr.us-east-1.amazonaws.com/cloudnorth-backend
         ports:
         - containerPort: 5000

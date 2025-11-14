@@ -1,0 +1,65 @@
+name: Deploy to EKS
+
+# This is the trigger for the workflow
+on:
+  workflow_run:
+    workflows: ["Docker Build and Push"] # Runs AFTER the "Docker Build and Push" workflow
+    types:
+      - completed
+
+jobs:
+  deploy:
+    name: Deploy to EKS Cluster
+    runs-on: ubuntu-latest
+    # This 'if' condition ensures this job only runs if the build workflow was successful
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+
+    steps:
+    # 1. Check out the repository code
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    # 2. Configure AWS credentials using the secrets we created in an earlier phase
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: us-east-1 # Make sure this is your correct region
+
+    # 3. Connect kubectl to our EKS cluster
+    - name: Configure Kubectl
+      run: aws eks update-kubeconfig --name cloudnorth-cluster-v2 --region us-east-1
+
+    # 4. Install the Kustomize tool in the runner environment
+    - name: Install Kustomize
+      run: |
+        curl -s "https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh"  | bash
+        sudo mv kustomize /usr/local/bin/
+
+    # 5. This is the core deployment logic
+    - name: Update manifests and deploy to EKS
+      run: |
+        # Navigate to the kubernetes directory
+        cd kubernetes
+        
+        # Get the unique Git commit hash from the build workflow that triggered this run
+        IMAGE_TAG=${{ github.event.workflow_run.head_sha }}
+        
+        echo "Deploying with image tag: $IMAGE_TAG"
+
+        # Dynamically set the image tag for the backend deployment using Kustomize
+        # Note: We will add a similar line for the frontend later if needed
+        kustomize edit set image 305767681186.dkr.ecr.us-east-1.amazonaws.com/cloudnorth-backend=$IMAGE_TAG
+
+        echo "--- Updated kustomization.yaml ---"
+        cat kustomization.yaml
+        
+        # Build the final YAML and apply it to the cluster
+        # The '|' pipes the output of 'kustomize build' directly to 'kubectl apply'
+        # The '-f -' tells kubectl to read from the standard input pipe
+        kustomize build . | kubectl apply -f -
+
+    # 6. Verify the deployment was successful
+    - name: Verify deployment rollout
+      run: kubectl rollout status deployment/backend-deployment --timeout=2m
