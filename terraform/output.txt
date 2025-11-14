@@ -1,4 +1,4 @@
-_provider "aws" {
+yes_provider "aws" {
   region = "us-east-1"
 }
 
